@@ -1,0 +1,22 @@
+{
+  "KPackageStructure": "Plasma/Applet",
+  "KPlugin": {
+    "Id": "org.kde.eqrssnews",
+    "Name": "EQ-RSS News Reader",
+    "Description": "Adaptive RSS and Atom feed reader for KDE Plasma 6",
+    "Version": "1.0.1",
+    "Category": "Online Services",
+    "Icon": "rss",
+    "License": "GPL-3.0-or-later",
+    "Authors": [
+            {
+                "Email": "saradnja.barnak@gmail.com",
+                "Name": "Barnak Zlatko",
+                "Project": "EQuilibriumOS"
+
+            }
+        ],
+    "Website": " "
+  },
+  "X-Plasma-API-Minimum-Version": "6.0"
+}

@@ -1,0 +1,59 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+  <defs>
+    <!-- Pozadinski gradijent -->
+    <linearGradient id="bg" x1="0" y1="1" x2="1" y2="0">
+      <stop offset="0" stop-color="#1248b8" />
+      <stop offset="1" stop-color="#dcab5f" />
+    </linearGradient>
+
+    <!-- Gradijent za RSS signal (Bela u Plavu) -->
+    <linearGradient id="rssGrad" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#FFFFFF" />
+      <stop offset="100%" stop-color="#1248b8" />
+    </linearGradient>
+
+    <!-- Refleksija / Highlight gradijent -->
+    <linearGradient id="highlight" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.4" />
+      <stop offset="100%" stop-color="#ffffff" stop-opacity="0" />
+    </linearGradient>
+
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="120%">
+      <feDropShadow dx="0" dy="3" stdDeviation="3" flood-color="#000000" flood-opacity="0.25" />
+    </filter>
+  </defs>
+
+  <!-- Zaobljena pozadina -->
+  <rect x="2" y="2" width="124" height="124" rx="23" fill="url(#bg)" />
+
+  <!-- Veći RSS znak sa prelazom iz bele u plavu -->
+  <g fill="url(#rssGrad)" filter="url(#shadow)">
+    <!-- Tačka u donjem levom uglu (povećana) -->
+    <circle cx="34" cy="94" r="13" />
+
+    <!-- Unutrašnji (manji) RSS luk (uvećan i širi) -->
+    <path d="M 22 50 A 52 52 0 0 1 78 106 L 62 106 A 36 36 0 0 0 22 66 Z" />
+
+    <!-- Spoljašnji (veći) RSS luk (uvećan i širi) -->
+    <path d="M 22 18 A 84 84 0 0 1 110 106 L 94 106 A 68 68 0 0 0 22 34 Z" />
+  </g>
+
+  <!-- Refleksija na kugli -->
+  <circle cx="64" cy="64" r="40" fill="url(#highlight)" />
+
+  <!-- Gornji svetlosni odsjaj -->
+  <path d="
+    M 35 43
+    C 39 30, 52 24, 64 25
+    C 53 28, 43 36, 39 48
+    C 36 54, 32 53, 35 43 Z" fill="#FFFFFF" opacity="0.28" />
+
+  <!-- Donja refleksija -->
+  <path d="
+    M 31 79
+    C 40 103, 76 111, 96 88
+    C 84 108, 53 114, 34 96 Z" fill="#FFFFFF" opacity="0.12" />
+
+  <!-- EQ lettering -->
+  <text x="26" y="80" fill="#152020" font-family="DejaVu Sans, Arial, sans-serif" font-size="14" font-weight="700" letter-spacing="-2">EQ-RSS news</text>
+</svg>
