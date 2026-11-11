@@ -4,7 +4,7 @@
     "Id": "org.kde.eqrssnews",
     "Name": "EQ-RSS News Reader",
     "Description": "Adaptive RSS and Atom feed reader for KDE Plasma 6",
-    "Version": "1.0.2",
+    "Version": "1.1.0",
     "Category": "Online Services",
     "Icon": "rss",
     "License": "GPL-3.0-or-later",
