@@ -71,10 +71,10 @@ PlasmoidItem {
         // ne bude preopterećen kada postoji mnogo izvora.
         property int pendingRequests: 0
         property int activeRequests: 0
-        property int maxConcurrentRequests: 3
+        property int maxConcurrentRequests: 2
         property var requestQueue: []
         property var queuedFeedIndices: []
-        property int batchSize: 50
+        property int batchSize: 10
         property int articleDisplayLimit: 100
         property int loadedFeedCount: 0
         property var loadedFeedIndices: []
@@ -121,7 +121,7 @@ PlasmoidItem {
                     </style>
                 </head>
                 <body>
-                    <div class="loader">Učitavam tekst članka...</div>
+                    <div class="loader">Loading article text...</div>
                 </body>
                 </html>
             `)
@@ -350,6 +350,18 @@ PlasmoidItem {
             return absoluteUrl(u, base)
         }
 
+        // Stabilan identifikator članka: GUID/ID ima prednost, a link
+        // služi kao rezervni ključ za feedove koji ne daju GUID.
+        function articleIdentity(article) {
+            var feedPart = String(article.feedIndex)
+            var guid = String(article.guid || "").trim()
+            if (guid) return feedPart + "|id|" + guid
+            var link = String(article.link || "").trim()
+            if (link) return feedPart + "|link|" + link
+            return feedPart + "|title|" + String(article.title || "").trim() +
+                   "|" + String(article.date || "").trim()
+        }
+
         function parseFeed(xml, feedIndex) {
             var blocks = xml.match(/<(item|entry)\b[\s\S]*?<\/\1\s*>/gi) || []
             var result = []
@@ -363,8 +375,10 @@ PlasmoidItem {
                             rawTag(b, "description") || rawTag(b, "summary")
                 var date = cleanText(rawTag(b, "pubDate") || rawTag(b, "published") ||
                                     rawTag(b, "updated") || rawTag(b, "dc:date"))
+                var guid = cleanText(rawTag(b, "guid") || rawTag(b, "id"))
                 result.push({
-                    title: title, link: link, summary: cleanText(content), content: content,
+                    title: title, link: link, guid: guid,
+                    summary: cleanText(content), content: content,
                     date: date, image: extractImage(b, feed ? feed.url : ""),
                     feedIndex: feedIndex, feedName: feed ? feed.name : ""
                 })
@@ -388,7 +402,6 @@ PlasmoidItem {
 
             if (loadedFeedIndices.indexOf(index) === -1) {
                 loadedFeedIndices = loadedFeedIndices.concat([index])
-                saveData()
             }
 
             requestQueue = requestQueue.concat([index])
@@ -458,17 +471,38 @@ PlasmoidItem {
                     var parsed = parseFeed(req.responseText, index)
 
                     if (parsed && parsed.length > 0) {
-                        var keep = articles.filter(function(a) {
-                            return a.feedIndex !== index
-                        })
+                        // Postojeći članci ostaju netaknuti. Dodaju se samo
+                        // članci koje već nemamo iz ovog feeda.
+                        var known = ({})
+                        for (var oldIndex = 0; oldIndex < articles.length; ++oldIndex) {
+                            var oldArticle = articles[oldIndex]
+                            if (oldArticle.feedIndex === index)
+                                known[articleIdentity(oldArticle)] = true
+                        }
 
-                        articles = keep.concat(parsed)
-                        articles.sort(function(a, b) {
-                            return (Date.parse(b.date) || 0) -
-                                   (Date.parse(a.date) || 0)
-                        })
+                        var newArticles = []
+                        for (var newIndex = 0; newIndex < parsed.length; ++newIndex) {
+                            var candidate = parsed[newIndex]
+                            var identity = articleIdentity(candidate)
+                            if (!known[identity]) {
+                                known[identity] = true
+                                newArticles.push(candidate)
+                            }
+                        }
 
-                        statusMessage = qsTr("Feeds updated successfully")
+                        if (newArticles.length > 0) {
+                            // Sortiramo samo novopristigle članke; stara lista
+                            // se ne sortira niti ponovo pravi.
+                            newArticles.sort(function(a, b) {
+                                return (Date.parse(b.date) || 0) -
+                                       (Date.parse(a.date) || 0)
+                            })
+                            articles = newArticles.concat(articles)
+                            statusMessage = qsTr("New articles added") +
+                                            ": " + newArticles.length
+                        } else {
+                            statusMessage = qsTr("Feeds are up to date")
+                        }
                     } else {
                         statusMessage = qsTr("No valid articles received. Previous articles preserved.")
                     }
@@ -513,8 +547,8 @@ PlasmoidItem {
 
             if (loadedFeedCount === 0 && loadedFeedIndices.length === 0) {
                 loadedFeedCount = Math.min(batchSize, feeds.length)
-                saveData()
                 for (var i = 0; i < loadedFeedCount; ++i) enqueueFeed(i)
+                saveData()
             } else {
                 var indices = loadedFeedIndices.slice()
                 for (var j = 0; j < indices.length; ++j) enqueueFeed(indices[j])
@@ -540,6 +574,7 @@ PlasmoidItem {
             }
 
             if (requested > 0) {
+                saveData()
                 statusMessage = qsTr("Loading feeds") + " " + (start + 1) + "–" + end
             }
         }
@@ -575,9 +610,9 @@ PlasmoidItem {
             feeds = feeds.concat([{ url: u, name: host, icon: "rss" }])
             var newIndex = feeds.length - 1
             if (newIndex === 0 && loadedFeedCount === 0) loadedFeedCount = 1
-            saveData()
             discoverFeedInfo(u, newIndex)
             enqueueFeed(newIndex)
+            saveData()
         }
 
         function addGroup(name) {
