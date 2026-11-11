@@ -67,7 +67,13 @@ PlasmoidItem {
         property string articleViewMode: "reader" // reader ili website
         property int activeFeedIndex: -1
         property int activeGroupIndex: -1
+        // Ograničavamo broj paralelnih RSS zahteva da QML interfejs
+        // ne bude preopterećen kada postoji mnogo izvora.
         property int pendingRequests: 0
+        property int activeRequests: 0
+        property int maxConcurrentRequests: 3
+        property var requestQueue: []
+        property var queuedFeedIndices: []
         property int batchSize: 50
         property int articleDisplayLimit: 100
         property int loadedFeedCount: 0
@@ -366,26 +372,89 @@ PlasmoidItem {
             return result
         }
 
-        function fetchFeed(index) {
+        function updateLoadingState() {
+            pendingRequests = activeRequests + requestQueue.length
+            loading = pendingRequests > 0
+        }
+
+        function enqueueFeed(index) {
             if (index < 0 || index >= feeds.length) return
+
+            // Sprečava dupliranje zahteva za isti izvor u redu čekanja.
+            if (queuedFeedIndices.indexOf(index) !== -1) return
+
+            // Ako se izvor već učitava, ne pokrećemo još jedan zahtev.
+            if (activeFeedRequests[index] === true) return
 
             if (loadedFeedIndices.indexOf(index) === -1) {
                 loadedFeedIndices = loadedFeedIndices.concat([index])
                 saveData()
             }
 
+            requestQueue = requestQueue.concat([index])
+            queuedFeedIndices = queuedFeedIndices.concat([index])
+            updateLoadingState()
+            processFeedQueue()
+        }
+
+        // Evidencija aktivnih zahteva po indeksu izvora.
+        property var activeFeedRequests: ({})
+
+        function processFeedQueue() {
+            while (activeRequests < maxConcurrentRequests && requestQueue.length > 0) {
+                var index = requestQueue[0]
+                requestQueue = requestQueue.slice(1)
+
+                var queued = queuedFeedIndices.slice()
+                var queuedPosition = queued.indexOf(index)
+                if (queuedPosition !== -1) queued.splice(queuedPosition, 1)
+                queuedFeedIndices = queued
+
+                if (index < 0 || index >= feeds.length) {
+                    updateLoadingState()
+                    continue
+                }
+
+                if (activeFeedRequests[index] === true) {
+                    updateLoadingState()
+                    continue
+                }
+
+                startFeedRequest(index)
+            }
+
+            updateLoadingState()
+        }
+
+        function startFeedRequest(index) {
             var req = new XMLHttpRequest()
-            pendingRequests++
-            loading = true
+            var completed = false
+
+            activeFeedRequests[index] = true
+            activeRequests++
+            updateLoadingState()
+
+            function finishRequest() {
+                if (completed) return
+                completed = true
+
+                activeRequests = Math.max(0, activeRequests - 1)
+                var active = Object.assign({}, activeFeedRequests)
+                delete active[index]
+                activeFeedRequests = active
+                updateLoadingState()
+                processFeedQueue()
+            }
 
             req.open("GET", feeds[index].url)
+            req.timeout = 20000
 
             req.onreadystatechange = function() {
-                if (req.readyState !== XMLHttpRequest.DONE) return
-
-                pendingRequests = Math.max(0, pendingRequests - 1)
+                if (req.readyState !== XMLHttpRequest.DONE || completed) return
 
                 if (req.status >= 200 && req.status < 400) {
+                    // Parsiranje se izvršava samo za jedan završeni zahtev
+                    // u datom trenutku, umesto za desetine izvora odjednom.
                     var parsed = parseFeed(req.responseText, index)
 
                     if (parsed && parsed.length > 0) {
@@ -394,7 +463,6 @@ PlasmoidItem {
                         })
 
                         articles = keep.concat(parsed)
-
                         articles.sort(function(a, b) {
                             return (Date.parse(b.date) || 0) -
                                    (Date.parse(a.date) || 0)
@@ -409,18 +477,28 @@ PlasmoidItem {
                                     feeds[index].name + " (" + req.status + ")"
                 }
 
-                loading = pendingRequests > 0
+                finishRequest()
             }
 
             req.onerror = function() {
-                pendingRequests = Math.max(0, pendingRequests - 1)
-                loading = pendingRequests > 0
-
+                if (completed) return
                 statusMessage = qsTr("Network error while loading") +
-                                " " + feeds[index].name
+                                " " + (feeds[index] ? feeds[index].name : "")
+                finishRequest()
+            }
+
+            req.ontimeout = function() {
+                if (completed) return
+                statusMessage = qsTr("Request timed out") +
+                                " " + (feeds[index] ? feeds[index].name : "")
+                finishRequest()
             }
 
             req.send()
+        }
+
+        function fetchFeed(index) {
+            enqueueFeed(index)
         }
 
         function refreshAll() {
@@ -436,10 +514,10 @@ PlasmoidItem {
             if (loadedFeedCount === 0 && loadedFeedIndices.length === 0) {
                 loadedFeedCount = Math.min(batchSize, feeds.length)
                 saveData()
-                for (var i = 0; i < loadedFeedCount; ++i) fetchFeed(i)
+                for (var i = 0; i < loadedFeedCount; ++i) enqueueFeed(i)
             } else {
                 var indices = loadedFeedIndices.slice()
-                for (var j = 0; j < indices.length; ++j) fetchFeed(indices[j])
+                for (var j = 0; j < indices.length; ++j) enqueueFeed(indices[j])
             }
 
             statusMessage = qsTr("Updating loaded feeds…")
@@ -456,7 +534,7 @@ PlasmoidItem {
             var requested = 0
             for (var i = start; i < end; ++i) {
                 if (loadedFeedIndices.indexOf(i) === -1) {
-                    fetchFeed(i)
+                    enqueueFeed(i)
                     requested++
                 }
             }
@@ -499,7 +577,7 @@ PlasmoidItem {
             if (newIndex === 0 && loadedFeedCount === 0) loadedFeedCount = 1
             saveData()
             discoverFeedInfo(u, newIndex)
-            fetchFeed(newIndex)
+            enqueueFeed(newIndex)
         }
 
         function addGroup(name) {
