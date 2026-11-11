@@ -74,6 +74,8 @@ PlasmoidItem {
         property int maxConcurrentRequests: 2
         property var requestQueue: []
         property var queuedFeedIndices: []
+        // Novi članci iz svih feedova čekaju završetak ciklusa osvežavanja.
+        property var refreshNewArticles: []
         property int batchSize: 10
         property int articleDisplayLimit: 100
         property int loadedFeedCount: 0
@@ -386,6 +388,33 @@ PlasmoidItem {
             return result
         }
 
+        function articleTimestamp(article) {
+            var value = String(article && article.date ? article.date : "").trim()
+            if (!value) return 0
+
+            var timestamp = Date.parse(value)
+            return isNaN(timestamp) ? 0 : timestamp
+        }
+
+        function finalizeRefresh() {
+            // Ne objavljuj listu dok svi zahtevi iz reda i svi aktivni
+            // zahtevi nisu završeni.
+            if (activeRequests !== 0 || requestQueue.length !== 0) return
+            if (refreshNewArticles.length === 0) return
+
+            // Sortiranje je globalno: ne zavisi od toga kojim redom
+            // su pojedinačni RSS serveri odgovorili.
+            var fresh = refreshNewArticles.slice()
+            fresh.sort(function(a, b) {
+                return articleTimestamp(b) - articleTimestamp(a)
+            })
+
+            // Postojeća arhiva ostaje netaknuta i pomera se naniže.
+            articles = fresh.concat(articles)
+            refreshNewArticles = []
+            statusMessage = qsTr("New articles added") + ": " + fresh.length
+        }
+
         function updateLoadingState() {
             pendingRequests = activeRequests + requestQueue.length
             loading = pendingRequests > 0
@@ -437,6 +466,7 @@ PlasmoidItem {
             }
 
             updateLoadingState()
+            finalizeRefresh()
         }
 
         function startFeedRequest(index) {
@@ -480,29 +510,27 @@ PlasmoidItem {
                                 known[articleIdentity(oldArticle)] = true
                         }
 
-                        var newArticles = []
+                        // Uključi i već prikupljene nove članke iz istog feeda,
+                        // kako se isti unos ne bi dodao dvaput u jednom ciklusu.
+                        for (var stagedIndex = 0; stagedIndex < refreshNewArticles.length; ++stagedIndex) {
+                            var stagedArticle = refreshNewArticles[stagedIndex]
+                            if (stagedArticle.feedIndex === index)
+                                known[articleIdentity(stagedArticle)] = true
+                        }
+
+                        var addedCount = 0
                         for (var newIndex = 0; newIndex < parsed.length; ++newIndex) {
                             var candidate = parsed[newIndex]
                             var identity = articleIdentity(candidate)
                             if (!known[identity]) {
                                 known[identity] = true
-                                newArticles.push(candidate)
+                                refreshNewArticles.push(candidate)
+                                addedCount++
                             }
                         }
 
-                        if (newArticles.length > 0) {
-                            // Sortiramo samo novopristigle članke; stara lista
-                            // se ne sortira niti ponovo pravi.
-                            newArticles.sort(function(a, b) {
-                                return (Date.parse(b.date) || 0) -
-                                       (Date.parse(a.date) || 0)
-                            })
-                            articles = newArticles.concat(articles)
-                            statusMessage = qsTr("New articles added") +
-                                            ": " + newArticles.length
-                        } else {
+                        if (addedCount === 0)
                             statusMessage = qsTr("Feeds are up to date")
-                        }
                     } else {
                         statusMessage = qsTr("No valid articles received. Previous articles preserved.")
                     }
@@ -538,6 +566,7 @@ PlasmoidItem {
         function refreshAll() {
             if (!feeds.length) {
                 articles = []
+                refreshNewArticles = []
                 loadedFeedCount = 0
                 loadedFeedIndices = []
                 saveData()
