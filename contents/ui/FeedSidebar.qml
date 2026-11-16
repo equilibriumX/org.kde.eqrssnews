@@ -69,11 +69,17 @@ Rectangle {
                             ListView {
                                 Layout.fillWidth: true
                                 Layout.fillHeight: true
-                                model: controller.sortedFeedIndices()
+                                // Kada je izabrana grupa, prikazujemo samo izvore
+                                // koji pripadaju toj grupi. U suprotnom prikazujemo sve.
+                                model: controller.activeGroupIndex >= 0
+                                       ? controller.activeGroupFeeds()
+                                       : controller.sortedFeedIndices()
                                 spacing: 5
                                 clip: true
                                 delegate: Item {
-                                    property int originalIndex: modelData
+                                    property int originalIndex: controller.activeGroupIndex >= 0
+                                                                   ? modelData.feedIndex
+                                                                   : modelData
                                     width: ListView.view.width
                                     height: 42
 
@@ -111,7 +117,6 @@ Rectangle {
                                                 anchors.fill: parent
                                                 onClicked: {
                                                     controller.activeFeedIndex = originalIndex
-                                                    controller.activeGroupIndex = -1
                                                     controller.selectedArticle = null
                                                     controller.saveData()
                                                     if (!controller.articles.some(function(a) { return a.feedIndex === originalIndex; }))
@@ -121,7 +126,8 @@ Rectangle {
                                         }
 
                                         QQC2.ToolButton {
-                                            Layout.preferredWidth: 16
+                                            visible: controller.activeGroupIndex < 0
+                                            Layout.preferredWidth: visible ? 16 : 0
                                             Layout.preferredHeight: 38
                                             icon.name: "list-add"
                                             text: "+"
@@ -138,5 +144,5 @@ Rectangle {
                                 }
                             }
                         }
-                
+
 }

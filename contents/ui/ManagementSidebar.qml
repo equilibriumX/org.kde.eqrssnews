@@ -27,6 +27,201 @@ Rectangle {
     id: managementSidebar
     property var controller
 
+    property var discoveredFeeds: []
+    property string discoveryStatus: ""
+    property bool discovering: false
+
+    function normalizeWebsiteUrl(value) {
+        var url = (value || "").trim()
+        if (!url)
+            return ""
+        if (!/^https?:\/\//i.test(url))
+            url = "https://" + url
+        return url.replace(/\/+$/, "")
+    }
+
+    function htmlAttribute(tagText, attributeName) {
+        var escapedName = attributeName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+        var regex = new RegExp("(?:^|\\s)" + escapedName + "\\s*=\\s*(?:\"([^\"]*)\"|'([^']*)'|([^\\s>]+))", "i")
+        var match = tagText.match(regex)
+        if (!match)
+            return ""
+        return (match[1] !== undefined ? match[1] :
+                match[2] !== undefined ? match[2] : match[3]).trim()
+    }
+
+    function decodeHtmlAttribute(value) {
+        return (value || "").replace(/&amp;/gi, "&")
+                             .replace(/&quot;/gi, "\"")
+                             .replace(/&#39;|&apos;/gi, "'")
+                             .replace(/&lt;/gi, "<")
+                             .replace(/&gt;/gi, ">")
+    }
+
+    function resolveFeedUrl(href, baseUrl) {
+        href = decodeHtmlAttribute((href || "").trim())
+        if (!href || /^(javascript|data|mailto):/i.test(href))
+            return ""
+
+        // Keep absolute HTTP(S) URLs unchanged.
+        if (/^https?:\/\//i.test(href))
+            return href
+
+        var protocolMatch = baseUrl.match(/^(https?):\/\//i)
+        var originMatch = baseUrl.match(/^(https?:\/\/[^\/]+)/i)
+        if (!protocolMatch || !originMatch)
+            return ""
+
+        var protocol = protocolMatch[1] + ":"
+        var origin = originMatch[1]
+        if (href.indexOf("//") === 0)
+            return protocol + href
+        if (href.charAt(0) === "#")
+            return ""
+
+        // Remove query and fragment from the base before resolving a relative path.
+        var cleanBase = baseUrl.split("#")[0].split("?")[0]
+        if (href.charAt(0) === "/")
+            return origin + href
+
+        var lastSlash = cleanBase.lastIndexOf("/")
+        var directory = cleanBase.substring(0, lastSlash + 1)
+        var combined = directory + href
+
+        // Normalize ./ and ../ path segments without changing the query string.
+        var queryIndex = combined.search(/[?#]/)
+        var pathPart = queryIndex >= 0 ? combined.substring(0, queryIndex) : combined
+        var suffix = queryIndex >= 0 ? combined.substring(queryIndex) : ""
+        var prefixMatch = pathPart.match(/^(https?:\/\/[^\/]+)(.*)$/i)
+        if (!prefixMatch)
+            return combined
+        var segments = prefixMatch[2].split("/")
+        var normalized = []
+        for (var i = 0; i < segments.length; ++i) {
+            if (segments[i] === "..") {
+                if (normalized.length > 0)
+                    normalized.pop()
+            } else if (segments[i] !== ".") {
+                normalized.push(segments[i])
+            }
+        }
+        return prefixMatch[1] + normalized.join("/") + suffix
+    }
+
+    function addDiscoveredFeed(url, label) {
+        if (!url)
+            return
+        for (var i = 0; i < discoveredFeeds.length; ++i) {
+            if (discoveredFeeds[i].url === url)
+                return
+        }
+        var updated = discoveredFeeds.slice(0)
+        updated.push({ "url": url, "name": label || url })
+        discoveredFeeds = updated
+    }
+
+    function discoverWebsiteFeeds() {
+        var websiteUrl = normalizeWebsiteUrl(websiteInput.text)
+        if (!websiteUrl) {
+            discoveryStatus = qsTr("Enter a website address.")
+            return
+        }
+
+        discoveredFeeds = []
+        discoveryStatus = qsTr("Searching website for RSS/Atom feeds...")
+        discovering = true
+
+        var request = new XMLHttpRequest()
+        var completed = false
+        request.open("GET", websiteUrl)
+        request.onreadystatechange = function() {
+            if (request.readyState !== XMLHttpRequest.DONE || completed)
+                return
+            completed = true
+
+            var found = []
+            if (request.status >= 200 && request.status < 400) {
+                var html = request.responseText || ""
+                var pageUrl = request.responseURL || websiteUrl
+                var linkRegex = /<link\b[^>]*>/gi
+                var tag
+                while ((tag = linkRegex.exec(html)) !== null) {
+                    var tagText = tag[0]
+                    var rel = htmlAttribute(tagText, "rel").toLowerCase().split(/\s+/)
+                    var type = htmlAttribute(tagText, "type").toLowerCase().split(";")[0].trim()
+                    var href = htmlAttribute(tagText, "href")
+                    if (!href || rel.indexOf("alternate") === -1)
+                        continue
+                    if (type === "application/rss+xml" ||
+                        type === "application/atom+xml" ||
+                        type === "application/rdf+xml") {
+                        var resolved = resolveFeedUrl(href, pageUrl)
+                        if (resolved)
+                            found.push({ "url": resolved, "name": resolved })
+                    }
+                }
+            }
+
+            if (found.length > 0) {
+                discoveredFeeds = found
+                discoveryStatus = qsTr("Found %1 feed(s). Select one to add.").arg(found.length)
+                discovering = false
+            } else {
+                testFallbackFeedPaths(websiteUrl, 0)
+            }
+        }
+        request.onerror = function() {
+            if (completed)
+                return
+            completed = true
+            testFallbackFeedPaths(websiteUrl, 0)
+        }
+        request.send()
+    }
+
+    function testFallbackFeedPaths(websiteUrl, candidateIndex) {
+        var paths = ["/feed", "/feed/", "/rss", "/rss.xml", "/feed.xml",
+                     "/atom.xml", "/index.xml", "/feeds/posts/default?alt=rss"]
+        if (candidateIndex >= paths.length) {
+            discovering = false
+            discoveryStatus = discoveredFeeds.length > 0
+                              ? qsTr("Found %1 possible feed(s).").arg(discoveredFeeds.length)
+                              : qsTr("No RSS/Atom feed was found on this website.")
+            return
+        }
+
+        var candidate = resolveFeedUrl(paths[candidateIndex], websiteUrl)
+        var request = new XMLHttpRequest()
+        var completed = false
+        request.open("GET", candidate)
+        request.onreadystatechange = function() {
+            if (request.readyState !== XMLHttpRequest.DONE || completed)
+                return
+            completed = true
+
+            var body = request.responseText || ""
+            var looksLikeFeed = request.status >= 200 && request.status < 400 &&
+                                (/<rss\b/i.test(body) || /<feed\b/i.test(body) ||
+                                 /<rdf:RDF\b/i.test(body))
+            if (looksLikeFeed)
+                addDiscoveredFeed(candidate, candidate)
+
+            testFallbackFeedPaths(websiteUrl, candidateIndex + 1)
+        }
+        request.onerror = function() {
+            if (completed)
+                return
+            completed = true
+            testFallbackFeedPaths(websiteUrl, candidateIndex + 1)
+        }
+        request.send()
+    }
+
+    function addFoundFeed(url) {
+        controller.addFeed(url)
+        discoveryStatus = qsTr("Feed added.")
+    }
+
                         Layout.fillHeight: true
                         Layout.preferredWidth: 230
                         Layout.minimumWidth: 175
@@ -271,6 +466,112 @@ Rectangle {
                                     feedInput.text = ""
                                 }
                             }
+
+                            Rectangle {
+                                Layout.fillWidth: true
+                                height: 1
+                                color: Kirigami.Theme.separatorColor
+                            }
+
+                            PlasmaComponents.Button {
+                                Layout.fillWidth: true
+                                icon.name: "system-search"
+                                text: qsTr("Find RSS on website")
+                                onClicked: websiteFinderDialog.open()
+                            }
                         }
-                
+
+                        QQC2.Dialog {
+                            id: websiteFinderDialog
+                            title: qsTr("Find RSS feeds on website")
+                            modal: false
+                            focus: true
+                            width: 740
+                            height: 470
+                            standardButtons: QQC2.Dialog.Close
+
+                            ColumnLayout {
+                                anchors.fill: parent
+                                spacing: Kirigami.Units.smallSpacing
+
+                                PlasmaComponents.Label {
+                                    Layout.fillWidth: true
+                                    text: qsTr("Enter a website address. EQ-RSS Reader will search its HTML for RSS/Atom feeds and check common feed locations if needed.")
+                                    wrapMode: Text.WordWrap
+                                }
+
+                                RowLayout {
+                                    Layout.fillWidth: true
+                                    QQC2.TextField {
+                                        id: websiteInput
+                                        Layout.fillWidth: true
+                                        placeholderText: "https://example.com"
+                                        enabled: !managementSidebar.discovering
+                                        onAccepted: managementSidebar.discoverWebsiteFeeds()
+                                    }
+                                    PlasmaComponents.Button {
+                                        Layout.preferredWidth: 145
+                                        enabled: !managementSidebar.discovering && websiteInput.text.trim().length > 0
+                                        icon.name: managementSidebar.discovering ? "view-refresh" : "system-search"
+                                        text: managementSidebar.discovering ? qsTr("Searching...") : qsTr("Find feeds")
+                                        onClicked: managementSidebar.discoverWebsiteFeeds()
+                                    }
+                                }
+
+                                PlasmaComponents.Label {
+                                    Layout.fillWidth: true
+                                    visible: managementSidebar.discoveryStatus.length > 0
+                                    text: managementSidebar.discoveryStatus
+                                    wrapMode: Text.WordWrap
+                                    opacity: 0.8
+                                }
+
+                                ListView {
+                                    id: discoveredFeedsList
+                                    Layout.fillWidth: true
+                                    Layout.fillHeight: true
+                                    clip: true
+                                    spacing: Kirigami.Units.smallSpacing
+                                    model: managementSidebar.discoveredFeeds
+
+                                    delegate: Rectangle {
+                                        width: ListView.view.width
+                                        height: Math.max(66, feedUrlLabel.implicitHeight + 24)
+                                        radius: Kirigami.Units.cornerRadius
+                                        color: Kirigami.Theme.alternateBackgroundColor
+
+                                        RowLayout {
+                                            anchors.fill: parent
+                                            anchors.margins: Kirigami.Units.smallSpacing
+                                            spacing: Kirigami.Units.smallSpacing
+
+                                            PlasmaComponents.Label {
+                                                id: feedUrlLabel
+                                                Layout.fillWidth: true
+                                                text: modelData.url
+                                                wrapMode: Text.WrapAnywhere
+                                                verticalAlignment: Text.AlignVCenter
+                                                font.pointSize: Kirigami.Theme.smallFont.pointSize
+                                                textFormat: Text.PlainText
+                                            }
+
+                                            PlasmaComponents.Button {
+                                                Layout.alignment: Qt.AlignVCenter
+                                                icon.name: "list-add"
+                                                text: qsTr("Add")
+                                                onClicked: managementSidebar.addFoundFeed(modelData.url)
+                                            }
+                                        }
+                                    }
+
+                                    PlasmaComponents.Label {
+                                        anchors.centerIn: parent
+                                        visible: discoveredFeedsList.count === 0 && !managementSidebar.discovering && managementSidebar.discoveryStatus.length === 0
+                                        text: qsTr("Discovered feeds will appear here.")
+                                        opacity: 0.6
+                                    }
+                                }
+                            }
+                        }
+
 }

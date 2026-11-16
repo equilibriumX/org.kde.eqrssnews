@@ -1,4 +1,4 @@
-***************************************************************************
+/***************************************************************************
  *   Copyright 2026 by Barnak Zlatko <saradnja.barnak@gmail.com>           *
  *                                                                         *
  *   This program is free software; you can redistribute it and/or modify  *
